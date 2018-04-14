@@ -1,0 +1,89 @@
+Part 3: Clustering
+Using the file you have created in 1-B, run KMeans clustering using 7 clusters.
+A.	Using Mahout synthetic clustering as you have in a previous assignment on sample data.
+time mahout org.apache.mahout.clustering.syntheticcontrol.kmeans.Job
+
+mahout clusterdump --input output/clusters-10-final --pointsDir output/clusteredPoints --output clusteranalyze.txt
+
+B.	Using Hadoop streaming perform one iteration manually with randomly chosen input centers. (This would require passing a text file with cluster centers using -file option, opening the centers.txt in the mapper with open(‘centers.txt’, ‘r’) and assigning a key to each point based on which center is the closest to each particular point). Your reducer would need to compute the new centers, and at that point the iteration is done.
+#!/usr/bin/python
+import random
+
+for i in range(7):
+print"%i %i %i %i %i %i" %(i,random.randint(0,30),random.randint(90000,5000000),random.randint(90000,5000000),random.randint(3,5),random.randint(90000,6000000))
+
+python centroids.py > centroids.txt
+
+###This is mapper###
+
+#!/usr/bin/python
+import sys
+
+file=open('centroids.txt','r')
+list=[]
+
+def dist(x,y):
+	sum=0
+	for i in range(0,5):
+		sum=sum+(float(x[i])-float(y[i+1]))**2
+		return total**0.5
+
+for line in file:
+	list.append(line.strip().split(' '))
+
+for line in sys.stdin:
+	line=line.strip()
+	item=line.split(' ')
+	if len(item)>0:
+		distance=[]
+	for i in range(0,7):
+		distance.append(dist(item,list[i]))
+		key=distance.index(min(distance))
+	print "%i\t%s" % (key,line)
+
+###Reducer###
+import sys
+
+curr_id = None
+cnt = 1.0
+id = None
+centers=[0,0,0,0,0]
+
+for line in sys.stdin:
+
+    ln = line.split('\t')
+    id = ln[0]
+
+    if curr_id==id:
+        point=ln[1].strip().split(' ')
+        for i in range(len(centers)):
+            centers[i]=centers[i]+float(point[i])
+            cnt=cnt+1
+    elif curr_id==None:
+        curr_id=id
+    else:
+        centersnew=[x/cnt for x in centers]
+        centersnew.insert(0,curr_id)
+        print(centersnew)
+
+    curr_id=id
+    centers=[0,0,0,0,0]
+    cnt=1.0
+
+    if curr_id==id:
+        centersnew=[x/cnt for x in centers]
+        centersnew.insert(0,id)
+        print(centersnew)
+
+
+cp /home/ec2-user/hadoop-2.6.4/share/hadoop/tools/lib/hadoop-streaming-2.6.4.jar /home/ec2-user/hadoop-2.6.4/
+
+time hadoop jar /home/ec2-user/hadoop-2.6.4/share/hadoop/tools/lib/hadoop-streaming-2.6.4.jar -input /user/ec2-user/data1/output2_line/ -mapper clusteringmapper.py -file centroids.txt -file clusteringmapper.py -reducer clusteringreducer.py -file clusteringreducer.py -output clustering_output
+
+NOTE: if you get a java.lang.OutOfMemoryError error, you will need to reconfigure Hadoop to supply the java virtual machine with more memory.  You can do this by editing the mapred-site.xml (Mapper should not need much RAM):
+  <property>
+    <name> mapreduce.reduce.java.opts</name>
+    <value>-Xmx1024m</value>
+  </property>
+The amount of memory can be tweaked (you can go higher, but keep in mind how much physical memory your machine has). Do not forget to restart Hadoop after any configuration file change.
+If you still run out of memory in 3-A submit the screenshot of that and you will get full credit for the question.
