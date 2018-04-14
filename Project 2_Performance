@@ -1,0 +1,102 @@
+Part 4: Performance
+Compare the performance given following combinations. If you already ran that combination before it is sufficient to copy the runtime for comparison. 
+A.	All three of your solutions to Part-1A with
+a.	Scale4: single node and a cluster of at least 4 nodes
+Scale4 single node:
+Hive: Time taken: 42.408 seconds
+
+create table lineorder2 (
+    > lo_orderkey          int,
+    > lo_linenumber        int,
+    > lo_custkey           int,
+    > lo_partkey           int,
+    > lo_suppkey           int,
+    > lo_orderdate         int,
+    > lo_orderpriority     string,
+    > lo_shippriority      string,
+    > lo_quantity          int,
+    > lo_extendedprice     int,
+    > lo_ordertotalprice   int,
+    > lo_discount          int,
+    > lo_revenue           int,
+    > lo_supplycost        int,
+    > lo_tax               int,
+    > lo_commitdate         int,
+    > lo_shipmode          string
+    > )
+    > ROW FORMAT DELIMITED FIELDS
+> TERMINATED BY '|' STORED AS TEXTFILE;
+
+LOAD DATA LOCAL INPATH '/home/ec2-user/lineorder.tbl'
+    OVERWRITE INTO TABLE lineorder2;
+
+
+
+time hive -e "INSERT OVERWRITE DIRECTORY '/user/ec2-user/data1/output/' select CONCAT(lo_orderkey,',',lo_linenumber,',',lo_custkey,',',lo_partkey, ',',lo_suppkey,',',lo_orderdate,',',lo_orderpriority,',',lo_shippriority,',',lo_quantity,',',lo_extendedprice,',',lo_ordertotalprice,',',lo_discount,',',lo_revenue,',',lo_supplycost,',',lo_tax,',',lo_commitdate,',',lo_shipmode) from lineorder2;"
+
+	
+A cluster with 4 nodes: (scale4)
+Hive:
+time hadoop jar /home/ec2-user/hadoop-2.6.4/share/hadoop/tools/lib/hadoop-streaming-2.6.4.jar -input /user/ec2-user/data1/lineorder.tbl -mapper lineordermapper.py -file lineordermapper.py -reducer lineorderreducer.py -file lineorderreducer.py -output /user/ec2-user/data1/lineorder_output_stream
+
+Pig:
+Time: 
+2017-11-18 03:35:28	2017-11-18 03:37:00
+
+lineorder =LOAD '/user/ec2-user/data1/lineorder.tbl' USING PigStorage('|') 
+
+AS(lo_orderkey:int,lo_linenumber:int,lo_custkey:int,lo_partkey:int,lo_suppkey:int,lo_orderdate:int,lo_orderpriority:chararray,lo_shippriority:chararray,lo_quantity:int,lo_extendedprice:int,lo_ordertotalprice:float,lo_discount:int,lo_revenue:float,lo_supplycost:float,lo_tax:float,lo_commitdate:int,lo_shipmode:chararray);
+
+store lineorder into 'lineorderpig.csv' using PigStorage(',');
+
+b.	Scale14: a cluster of at least 4 nodes
+time hadoop jar /home/ec2-user/hadoop-2.6.4/share/hadoop/tools/lib/hadoop-streaming-2.6.4.jar -input /user/ec2-user/data1/lineorder.tbl.1 -mapper lineordermapper.py -file lineordermapper.py -reducer lineorderreducer.py -file lineorderreducer.py -output /user/ec2-user/data1/lineorder_output_scale14
+real	10m29.858s
+user 0m5.468s
+sys	0m0.324s
+
+B.	Both of your solutions for 2-B.
+a.	Scale4: single node and a cluster of at least 4 nodes
+
+A cluster with 4 nodes: HIVE
+real	0m55.459s
+user	0m26.708s
+sys	0m1.436s
+
+time hive -e "select sum(lo_revenue), d_year, p_brand1
+from prejoin, part, supplier
+where lo_partkey = p_partkey
+and lo_suppkey = s_suppkey
+and p_category = 'MFGR#12'
+and s_region = 'AMERICA'
+group by d_year, p_brand1
+order by d_year, p_brand1;"
+
+A cluster with 4 nodes: PIG
+2017-11-18 04:42:25	2017-11-18 04:48:24
+
+prejoin1 =LOAD '/user/ec2-user/data1/pigoutput2' USING PigStorage('|') 
+AS (lo_partkey:int,lo_suppkey:int,lo_discount:chararray,d_year:int,lo_revenue:int);
+
+part =LOAD '/user/ec2-user/data1/part.tbl' USING PigStorage('|') 
+AS (p_partkey:int,p_name:chararray,p_mfgr:chararray,p_category:chararray,p_brand1:chararray,p_color:chararray,p_type:chararray,p_size:int,p_container:chararray);
+
+supplier =LOAD '/user/ec2-user/data1/supplier.tbl' USING PigStorage('|') 
+AS (s_suppkey:int,s_name:chararray,s_address:chararray,s_city:chararray,s_nation:chararray,s_region:chararray,s_phone:chararray);
+
+customer =LOAD '/user/ec2-user/data1/customer.tbl' USING PigStorage('|') 
+AS (c_custkey:int,c_name:chararray,c_address:chararray,c_city:chararray,c_nation:chararray,c_region:chararray,c_phone:chararray,c_mktsegment:chararray);
+
+filter1 =filter part by p_category MATCHES 'MFGR#12';
+filter2 =filter supplier by s_region MATCHES 'AMERICA';
+join1 =join prejoin1 by lo_partkey, filter1 by p_partkey;
+join2 =join join1 by prejoin1::lo_suppkey, filter2 BY s_suppkey;
+group1 =group join2 by (join1::prejoin1::d_year,join1::filter1::p_brand1);
+
+final =FOREACH group1 GENERATE SUM(join2.join1::prejoin1::lo_revenue),FLATTEN(group) as (year, brand1);
+order1 =ORDER final BY year, brand1;
+
+DUMP order1;
+
+From the results we can see that using a single node in HIVE, PIG, HadoopStreaming, the time is a little bit slower comparing to using a cluster with 4 nodes. 
+The cluster performance on single node and 4 nodes does not seem too much difference. 
