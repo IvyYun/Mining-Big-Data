@@ -1,0 +1,265 @@
+In this part of the project, you will various queries using Hive, Pig and Hadoop streaming. The schema is available below, but do remember that schema should specify the delimiter:
+http://rasinsrv07.cstcis.cti.depaul.edu/CSC555/SSBM1/SSBM_schema_hive.sql
+
+The data is available at (note that the data is |-separated, not comma separated):
+http://rasinsrv07.cstcis.cti.depaul.edu/CSC553/data/  (this is Scale4)
+http://rasinsrv07.cstcis.cti.depaul.edu/CSC553/data/Scale14/ (This is Scale14, larger version)
+
+Part 1: Data Transformation
+Using Scale4 data perform the following data processing. 
+# A.	Transform lineorder.tbl table into a csv (comma-separated file): Use Hive, MapReduce with HadoopStreaming and Pig (i.e. 3 different solutions)
+
+ssh -i /Users/ivy/Downloads/ivyyun.pem.txt ec2-user@13.59.83.147
+
+start-dfs.sh; start-yarn.sh; mr-jobhistory-daemon.sh start historyserver
+hadoop fs -mkdir -p /user/ec2-user/
+
+hadoop fs -mkdir -p /user/hive/warehouse
+
+hadoop fs -chmod g+w /tmp
+
+hadoop fs -chmod g+w /user/hive/warehouse
+
+wget http://rasinsrv07.cstcis.cti.depaul.edu/CSC553/data/lineorder.tbl
+
+hadoop fs -mkdir /user/ec2-user/data1/
+
+hadoop fs -put lineorder.tbl /user/ec2-user/data1
+hadoop fs -ls /user/ec2-user/data1
+
+cd $HIVE_HOME
+
+rm -rf metastore_db/ 
+
+$HIVE_HOME/bin/schematool -initSchema -dbType derby
+
+bin/hive
+
+###Hive###:
+create table lineorder (
+  lo_orderkey          int,
+  lo_linenumber        int,
+  lo_custkey           int,
+  lo_partkey           int,
+  lo_suppkey           int,
+  lo_orderdate         int,
+  lo_orderpriority     string,
+  lo_shippriority      string,
+  lo_quantity          int,
+  lo_extendedprice     int,
+  lo_ordertotalprice   int,
+  lo_discount          int,
+  lo_revenue           int,
+  lo_supplycost        int,
+  lo_tax               int,
+  lo_commitdate        int,
+  lo_shipmode          string    
+)
+
+ROW FORMAT DELIMITED FIELDS
+TERMINATED BY '|' STORED AS TEXTFILE;
+
+LOAD DATA LOCAL INPATH '/home/ec2-user/lineorder.tbl'
+OVERWRITE INTO TABLE lineorder;
+
+time hive -e "INSERT OVERWRITE DIRECTORY '/user/ec2-user/data1/output/' select CONCAT(lo_orderkey,',',lo_linenumber,',',lo_custkey,',',lo_partkey, ',',lo_suppkey,',',lo_orderdate,',',lo_orderpriority,',',lo_shippriority,',',lo_quantity,',',lo_extendedprice,',',lo_ordertotalprice,',',lo_discount,',',lo_revenue,',',lo_supplycost,',',lo_tax,',',lo_commitdate,',',lo_shipmode) from lineorder;"
+
+###Convert to CSV in Hive###
+hadoop fs -cat /user/hive/warehouse/lineorder/lineorder.tbl* > ~/lineorder.csv
+
+###PIG###
+hadoop fs -put lineorder.tbl /user/ec2-user/data1
+cd $PIG_HOME
+bin/pig
+
+lineorder =LOAD '/user/ec2-user/data1' USING PigStorage('|')
+
+AS (lo_orderkey:int,lo_linenumber:int,lo_custkey:int,lo_partkey:int,lo_suppkey:int,lo_orderdate:int,lo_orderpriority:chararray,lo_shippriority:chararray,lo_quantity:int,lo_extendedprice:int,lo_ordertotalprice:float,lo_discount:int,lo_revenue:int,lo_supplycost:int,lo_tax:int,lo_commitdate:int,lo_shipmode:chararray);
+
+store lineorder into '/user/ec2-user/data1/lineorder1.csv' using PigStorage(' ');
+
+
+###lineordermapper.py###
+
+#!/usr/bin/python
+import sys
+
+for line in sys.stdin:
+    lineorder = line.strip().replace('|',',')
+    print(lineorder)
+
+###lineorderreducer.py###
+
+#!/usr/bin/python
+import sys
+
+for line in sys.stdin:
+    dates = line.strip().split(',')
+    print(','.join(dates))
+
+time hadoop jar /home/ec2-user/hadoop-2.6.4/share/hadoop/tools/lib/hadoop-streaming-2.6.4.jar -input /user/ec2-user/data1/lineorder.tbl -mapper lineordermapper.py -file lineordermapper.py -reducer lineorderreducer.py -file lineorderreducer.py -output /user/ec2-user/data1/lineorder_output_stream
+
+
+# B.	Extract five of the numeric columns that for rows where lo_discount is between 4 and 6 into a space-separated text file (for K-Means clustering later). Use Hive and Pig (2 different solutions)
+###HIVE###
+
+time hive -e "INSERT OVERWRITE DIRECTORY '/user/ec2-user/data1/output2_line/' select CONCAT(lo_quantity,' ',lo_extendedprice,' ',lo_ordertotalprice,' ',lo_discount,' ',lo_revenue,' ') from lineorder where lo_discount>=4 and lo_discount<=6;"
+
+
+###PIG###
+
+lineorder =LOAD '/user/ec2-user/data1/lineorder.tbl' USING PigStorage('|')
+
+AS (lo_orderkey:int,lo_linenumber:int,lo_custkey:int,lo_partkey:int,lo_suppkey:int,lo_orderdate:int,lo_orderpriority:chararray,lo_shippriority:chararray,lo_quantity:int,lo_extendedprice:int,lo_ordertotalprice:float,lo_discount:int,lo_revenue:int,lo_supplycost:int,lo_tax:int,lo_commitdate:int,lo_shipmode:chararray);
+
+Filter1 = FILTER lineorder BY (lo_discount>=4 AND lo_discount<=6);
+
+lineordernew =foreach Filter1 generate (lo_quantity, lo_extendedprice, lo_ordertotalprice,lo_discount,lo_revenue);
+
+store lineordernew into '/user/ec2-user/data1/pigoutput1' using PigStorage(' ');
+
+(NOTE: you do not need to use your code to identify what is a numeric column, just go by what the data types say. You should manually pick any 5 columns that contain only numbers) 
+C.	Create a pre-join (i.e. a new data file) that corresponds to the following query below. You can think of it as a materialized view. What is the size of the new file? Use Hive and Pig (2 different solutions).
+SELECT lo_partkey, lo_suppkey, lo_discount, d_year, lo_revenue                              
+FROM lineorder, dwdate								                WHERE lo_orderdate = d_datekey;
+hadoop fs -put dwdate.tbl /user/ec2-user/data1
+
+time hive -e "INSERT OVERWRITE DIRECTORY '/user/ec2-user/data1/output3/' SELECT CONCAT(lo_partkey,'|', lo_suppkey,'|', lo_discount,'|', d_year,'|', lo_revenue) FROM lineorder, dwdate WHERE lo_orderdate = d_datekey;"
+
+###PIG###
+
+lineorder =LOAD '/user/ec2-user/data1/lineorder.tbl' USING PigStorage('|') AS (lo_orderkey:int,lo_linenumber:int,lo_custkey:int,lo_partkey:int,lo_suppkey:int,lo_orderdate:int,lo_orderpriority:chararray,lo_shippriority:chararray,lo_quantity:int,lo_extendedprice:int,lo_ordertotalprice:float,lo_discount:int,lo_revenue:float,lo_supplycost:float,lo_tax:float,lo_commitdate:int,lo_shipmode:chararray);
+
+dwdate =LOAD '/user/ec2-user/data1/dwdate.tbl' USING PigStorage('|') AS (d_datekey:int,d_date:chararray,d_dayofweek:chararray,d_month:chararray,d_year:int,d_yearmonthnum:int,d_yearmonth:chararray,d_daynuminweek:int,d_daynuminmonth:int,d_daynuminyear:int,d_monthnuminyear:int,d_weeknuminyear:int,d_sellingseason:chararray,d_lastdayinweekfl:chararray,d_lastdayinmonthfl:chararray,d_holidayfl:chararray,d_weekdayfl:chararray);
+
+prejoin =JOIN lineorder BY lo_orderdate, dwdate BY d_datekey;
+
+pignew =foreach prejoin generate (lo_partkey, lo_suppkey, lo_discount, d_year, lo_revenue);
+
+store pignew into '/user/ec2-user/data1/pigoutput2' using PigStorage('|');
+
+Part 2: Querying
+All queries from SSBM benchmark are available here:
+http://rasinsrv07.cstcis.cti.depaul.edu/CSC555/SSBM1/SSBM_queries_all.sql
+Using Scale4 data perform the following data processing and don’t forget to time your results.
+###HIVE###
+create table part (
+p_partkey     int,
+p_name        string,
+p_mfgr        string,
+p_category    string,
+p_brand1      string,
+p_color       string,
+p_type        string,
+p_size        int,
+p_container   string
+)
+ROW FORMAT DELIMITED FIELDS
+TERMINATED BY '|' STORED AS TEXTFILE;
+
+LOAD DATA LOCAL INPATH '/home/ec2-user/part.tbl'
+OVERWRITE INTO TABLE part;
+
+create table supplier (
+s_suppkey     int,
+s_name        string,
+s_address     string,
+s_city        string,
+s_nation      string,
+s_region      string,
+s_phone       string
+)
+ROW FORMAT DELIMITED FIELDS
+TERMINATED BY '|' STORED AS TEXTFILE;
+
+LOAD DATA LOCAL INPATH '/home/ec2-user/supplier.tbl'
+OVERWRITE INTO TABLE supplier;
+
+create table customer (
+c_custkey     int,
+c_name        string,
+c_address     string,
+c_city        string,
+c_nation      string,
+c_region      string,
+c_phone       string,
+c_mktsegment  string
+)
+ROW FORMAT DELIMITED FIELDS
+TERMINATED BY '|' STORED AS TEXTFILE;
+
+LOAD DATA LOCAL INPATH '/home/ec2-user/customer.tbl'
+OVERWRITE INTO TABLE customer;
+
+A.	Run SSBM queries 2.2, 3.2 and 4.2 using Hive only.
+2.2
+time hive -e "select sum(lo_revenue), d_year, p_brand1 from lineorder, dwdate, part, supplier where lo_orderdate = d_datekey and lo_partkey = p_partkey
+and lo_suppkey = s_suppkey and p_brand1 between 'MFGR#2221' and 'MFGR#2228'
+and s_region = 'ASIA' group by d_year, p_brand1 order by d_year, p_brand1;"
+
+3.2
+time hive -e "select c_city, s_city, d_year, sum(lo_revenue) as revenue from customer, lineorder, supplier, dwdate where lo_custkey = c_custkey and lo_suppkey = s_suppkey and lo_orderdate = d_datekey and c_nation = 'UNITED STATES' and s_nation = 'UNITED STATES' and d_year between 1992 and 1997 and d_year >= 1992 and d_year <= 1997 group by c_city, s_city, d_year order by d_year asc, revenue asc;"
+
+ 
+4.2
+select d_year, s_nation, p_category, sum(lo_revenue) as profit1 from dwdate, customer, supplier, part, lineorder where lo_custkey = c_custkey and lo_suppkey = s_suppkey and lo_partkey = p_partkey and lo_orderdate = d_datekey and c_region = 'AMERICA' and s_region = 'AMERICA' and d_year = 1997 and p_mfgr = 'MFGR#1' group by d_year, s_nation, p_category;
+
+B.	For this part use Hive and Pig (two different solutions) to run Q2.1 using what you have created in 1-C (i.e. use PreJoin1 instead of lineorder and dwdate tables in the from clause). You would need to rewrite the query accordingly. (e.g. something like,
+select sum(lo_revenue), d_year, p_brand1
+from MyNewStructureFrom1C, part, supplier
+where lo_partkey = p_partkey
+  and lo_suppkey = s_suppkey
+  and p_category = 'MFGR#12'
+  and s_region = 'AMERICA'
+group by d_year, p_brand1
+order by d_year, p_brand1;)
+###HIVE###
+create table prejoin1 (
+lo_partkey int,
+lo_suppkey int,
+lo_discount int,
+d_year int,
+lo_revenue int
+)
+ROW FORMAT DELIMITED FIELDS
+TERMINATED BY '|' STORED AS TEXTFILE;
+
+LOAD DATA LOCAL INPATH '/home/ec2-user/output3/'
+OVERWRITE INTO TABLE prejoin1;
+
+time hive -e "select sum(lo_revenue), d_year, p_brand1
+from prejoin1, part, supplier
+where lo_partkey = p_partkey
+and lo_suppkey = s_suppkey
+and p_category = 'MFGR#12'
+and s_region = 'AMERICA'
+group by d_year, p_brand1
+order by d_year, p_brand1;"
+
+
+###PIG###
+prejoin =LOAD '/user/ec2-user/data1/pigoutput2' USING PigStorage('|') 
+AS (lo_partkey:int,lo_suppkey:int,lo_discount:chararray,d_year:int,lo_revenue:int);
+
+part =LOAD '/user/ec2-user/data1/part.tbl' USING PigStorage('|') AS (p_partkey:int,p_name:chararray,p_mfgr:chararray,p_category:chararray,p_brand1:chararray,p_color:chararray,p_type:chararray,p_size:int,p_container:chararray);
+
+supplier =LOAD '/user/ec2-user/data1/supplier.tbl' USING PigStorage('|') AS (s_suppkey:int,s_name:chararray,s_address:chararray,s_city:chararray,s_nation:chararray,s_region:chararray,s_phone:chararray);
+
+customer =LOAD '/user/ec2-user/data1/customer.tbl' USING PigStorage('|') AS (c_custkey:int,c_name:chararray,c_address:chararray,c_city:chararray,c_nation:chararray,c_region:chararray,c_phone:chararray,c_mktsegment:chararray);
+
+filter1 =filter part by p_category MATCHES 'MFGR#12';
+
+filter2 =filter supplier by s_region MATCHES 'AMERICA';
+
+join1 =join prejoin by lo_partkey, filter1 by p_partkey;
+
+join2 =join join1 by prejoin::lo_suppkey, filter2 BY s_suppkey;
+
+group1 =group join2 by (join1::prejoin::d_year,join1::filter1::p_brand1);
+
+final =FOREACH group1 GENERATE SUM(join2.join1::prejoin::lo_revenue),FLATTEN(group) as (year, brand1);
+
+order1 =ORDER final BY year, brand1;
+
+DUMP order1;
+
